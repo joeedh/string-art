@@ -5,7 +5,7 @@ import config from '../config/config.js';
 
 import {simple, ToolOp} from '../path.ux/scripts/pathux.js';
 import {Workspace} from './editor.js';
-import {MeshTypes} from './mesh.js';
+import {makePatternProp} from '../patterns/pattern.js';
 
 ToolOp.prototype.undoPre = function (ctx) {
   this._undo = ctx.state.saveFileSync({
@@ -27,6 +27,14 @@ export class Context {
     this.state = state;
   }
 
+  get lineart() {
+    return this.state.lineart;
+  }
+
+  get pattern() {
+    return this.state.pattern;
+  }
+
   get workspace() {
     return simple.Editor.findEditor(Workspace);
   }
@@ -35,15 +43,12 @@ export class Context {
     return config.SELECTMASK;
   }
 
-  get mesh() {
-    return this.state.mesh;
-  }
-
   get properties() {
-    return this.state.properties;
+    return this.state.pattern.properties;
   }
 
   static defineAPI(api, st) {
     st.dynamicStruct("properties", "properties", "Properties");
+    st.dynamicStruct("state", "state", "State");
   }
 }

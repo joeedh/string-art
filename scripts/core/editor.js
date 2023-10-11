@@ -2,8 +2,8 @@ import {
   simple, nstructjs, util, math, Vector2, UIBase, Icons, KeyMap, haveModal, ToolOp, ToolClasses, HotKey, createMenu,
   startMenu
 } from '../path.ux/pathux.js';
-import {getElemColor} from './mesh.js';
-import {MeshEditor} from './mesh_editor.js';
+import {loadImageFile} from '../path.ux/scripts/path-controller/util/image.js';
+import {CACHED_IMAGE_KEY} from '../patterns/circle_winding.js';
 
 export class LoadDefaultsOp extends ToolOp {
   static tooldef() {
@@ -32,10 +32,20 @@ export class Workspace extends simple.Editor {
 
     this.mpos = new Vector2();
 
-    this.toolmode = new MeshEditor();
     this.shadow.appendChild(this.canvas);
 
     this.keymap = new KeyMap();
+
+    this.keymap.add(new HotKey("R", [], () => {
+      this.ctx.state.reset();
+      window.redraw_all();
+    }));
+    this.keymap.add(new HotKey("D", [], () => {
+      this.ctx.pattern.step();
+    }));
+    this.keymap.add(new HotKey("E", [], () => {
+      this.ctx.state.toggleTimer();
+    }));
 
     this.keymap.add(new HotKey("Space", [], () => {
       let menu = [];
@@ -75,8 +85,6 @@ export class Workspace extends simple.Editor {
       if (eventBad(e)) {
         return;
       }
-
-      this.toolmode.on_mousedown(mpos[0], mpos[1], e);
     });
 
     this.addEventListener("pointermove", (e) => {
@@ -87,7 +95,33 @@ export class Workspace extends simple.Editor {
         return;
       }
 
-      this.toolmode.on_mousemove(mpos[0], mpos[1], e);
+      if (0) {
+        let lineart = this.ctx.lineart;
+
+        if (!lineart.image) {
+          return;
+        }
+
+        let p = lineart.localMouse(mpos);
+        p = lineart.localImagePos(p);
+
+        console.log(p[0], p[1]);
+        p.floor();
+
+        if (p[0] < lineart.image.width && p[1] < lineart.image.height) {
+          let idx = (p[1]*lineart.image.width + p[0])*4;
+          let idata = lineart.image.data;
+
+          idata[idx] = 1;
+          idata[idx + 1] = 1;
+          idata[idx + 2] = 0;
+          idata[idx + 3] = 255;
+
+          lineart.reRenderImage();
+          window.redraw_all();
+          console.log(p, idx);
+        }
+      }
     });
 
     this.addEventListener("pointerup", (e) => {
@@ -97,8 +131,6 @@ export class Workspace extends simple.Editor {
       if (eventBad(e)) {
         return;
       }
-
-      this.toolmode.on_mouseup(mpos[0], mpos[1], e);
     });
   }
 
@@ -139,13 +171,11 @@ export class Workspace extends simple.Editor {
   }
 
   getKeyMaps() {
-    return [this.keymap, this.toolmode.keymap];
+    return [this.keymap];
   }
 
   init() {
     super.init();
-
-    this.toolmode.ctx = this.ctx;
 
     let sidebar = this.makeSideBar();
 
@@ -166,8 +196,29 @@ export class Workspace extends simple.Editor {
 
     row.tool("app.load_defaults()");
 
+    row.button("Load Image", () => {
+      loadImageFile().then(img => {
+        console.log("Got image", img);
+        localStorage[CACHED_IMAGE_KEY] = img.dataurl;
+        this.ctx.pattern.loadImage(img);
+      });
+    });
+
+    let but = row.button("Run", () => {
+      this.ctx.state.toggleTimer();
+    }).update.after(() => {
+      if (this.ctx.state.timer !== undefined) {
+        but.name = "Stop";
+      } else {
+        but.name = "Run";
+      }
+    });
+
     let tab;
     tab = sidebar.tab("Options");
+
+    tab.label("Current Pattern");
+    tab.prop("state.patternIndex");
 
     let props = UIBase.createElement("props-bag-editor-x");
     props.setAttribute("datapath", "properties");
@@ -195,9 +246,9 @@ export class Workspace extends simple.Editor {
     }
 
     this.g.clearRect(0, 0, canvas.width, canvas.height);
-    console.log("draw!");
+    //console.log("draw!");
 
-    this.toolmode.draw(this.ctx, this.canvas, this.g);
+    this.ctx.pattern.draw(canvas, this.g);
   }
 
   setCSS() {
