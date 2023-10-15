@@ -190,8 +190,9 @@ export class Workspace extends simple.Editor {
       this.ctx.toolstack.redo();
     });
 
-    row.button("Save Defaults", () => {
-      _appstate.saveStartupFile();
+    row.button("Reset", () => {
+      _appstate.reset();
+      window.redraw_all();
     })
 
     row.tool("app.load_defaults()");

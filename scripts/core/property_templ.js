@@ -149,6 +149,10 @@ export class PropertiesBag {
           }
         }
 
+        if (item.slider) {
+          def.simpleSlider();
+        }
+
         if ("min" in item) {
           def.data.range[0] = item.min;
         }

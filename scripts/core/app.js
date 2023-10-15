@@ -154,6 +154,7 @@ export class App extends simple.AppState {
 
     this.patterns = file.objects[0].patterns;
     this.pattern = this.patterns[0];
+    this.pattern.reset();
 
     window.redraw_all();
 

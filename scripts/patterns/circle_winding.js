@@ -2,6 +2,7 @@ import {getImageData} from '../path.ux/scripts/path-controller/util/image.js';
 import {Vector2, Vector3, Vector4, nstructjs, Matrix4, util, math} from '../path.ux/pathux.js';
 import {getColorValue} from '../core/util.js';
 import {Pattern} from './pattern.js';
+import {resizeImage, sharpenImage} from '../core/imagefilter.js';
 
 const LX1 = 0, LY1 = 1, LX2 = 2, LY2 = 3, LTOT = 4;
 const GVAL = 0, GGOAL = 1, GTEST = 3, GTOT = 4;
@@ -30,10 +31,11 @@ export class LineArt extends Pattern {
       dimen        : {
         type: "int", value: 256, min: 4, max: 1024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"
       },
+      linesGoal    : {type: "int", value: 4000, min: 1, max: 100000, baseUnit: "none", displayUnit: "none"},
       steps        : {type: "int", value: 72, min: 1, max: 1024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"},
       substeps     : {type: "int", value: 32, min: 1, max: 1024, slideSpeed: 2, baseUnit: "none", displayUnit: "none"},
       arcSteps     : {
-        type: "int", value: 256, min: 2, max: 1024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"
+        type: "int", value: 256, min: 2, max: 8024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"
       },
       drawImage    : {type: "bool", value: true},
       drawMask     : {type: "bool", value: true},
@@ -44,6 +46,14 @@ export class LineArt extends Pattern {
       drawLines    : {type: "bool", value: true},
       lineWidth    : {type: "float", value: 0.5, min: 0.01, max: 500.0, baseUnit: "none", displayUnit: "none"},
       maskLineWidth: {type: "float", value: 4.0, min: 0.01, max: 500.0, baseUnit: "none", displayUnit: "none"},
+      expDecay     : {type: "float", value: 1, min: 0.0001, max: 100.0, baseUnit: "none", displayUnit: "none"},
+      delCount     : {type: "int", value: 2, min: 1, max: 1000, baseUnit: "none", displayUnit: "none"},
+      doVariance   : {type: "bool", value: true},
+      contrast     : {type: "int", value: 2, min: 0, max: 10, baseUnit: "none", displayUnit: "none"},
+      brightness   : {type: "float", value: 1.0, min: 0.001, max: 4.0, baseUnit: "none", displayUnit: "none"},
+      sharpen      : {
+        type: "float", slider: true, value: 0.1, min: 0.001, max: 1.0, baseUnit: "none", displayUnit: "none"
+      },
     }
   };
 
@@ -51,6 +61,7 @@ export class LineArt extends Pattern {
   }
   `;
 
+  origImage = undefined; /* Image before scaling. */
   image = undefined;
   mask = undefined;
   value = undefined;
@@ -68,6 +79,8 @@ export class LineArt extends Pattern {
   offset = new Vector2([5, 5]); //pixel space
   maskAlpha = 1.0;
   lineAlpha = 0.2;
+  addOrDelSign = 1;
+  #signI = 0;
 
   step() {
     this.lineAlpha = this.properties.lineAlpha;
@@ -77,7 +90,10 @@ export class LineArt extends Pattern {
       return;
     }
 
-    console.log("Step!");
+    this.expDecay = Math.exp(-this.#signI*this.properties.expDecay*0.0001);
+    this.expDecay = (1.0 - this.expDecay)*0.5 + 0.5;
+
+    console.log("Step!", this.expDecay.toFixed(3));
 
     for (let i = 0; i < this.properties.steps; i++) {
       this.step_intern();
@@ -88,6 +104,29 @@ export class LineArt extends Pattern {
   }
 
   step_intern() {
+    let delCount = this.properties.delCount;
+    /* Help the solver get started by having line deletion
+     * happen less often if we have less than N lines.
+     *
+     * But note that a delCount of 1 is always delete
+     * mode. */
+    if (delCount > 1 && this.lines.length < 5000) {
+      delCount = Math.max(delCount, 3);
+    }
+
+    let linesGoal = this.properties.linesGoal;
+    if (this.lines.length > linesGoal && Math.random() > 0.01) {
+      delCount = 1;
+    }
+
+    this.addOrDelSign = (this.#signI++)%delCount !== 0 ? 1 : -1;
+    if (delCount === 1) {
+      this.addOrDelSign = -1;
+    }
+    if (this.lines.length === 0) {
+      this.addOrDelSign = 1;
+    }
+
     for (let i = 0; i < this.properties.substeps; i++) {
       this.step_intern2();
     }
@@ -101,15 +140,29 @@ export class LineArt extends Pattern {
       }
 
       const err = line[0];
-      line = [line[1], line[2]];
+      line = line[1];
       let grid = this.grid;
 
-      this.rasterLine(line, (p, gi, alpha) => {
-        grid[gi + GVAL] -= grid[gi + GVAL]*alpha;
-        grid[gi + GTEST] = Math.abs(err);
-      });
+      if (this.addOrDelSign === -1) {
+        let ri = this.lines.indexOf(line);
+        let del = this.lines[ri];
 
-      this.lines.push(line);
+        this.lines[ri] = this.lines[this.lines.length - 1];
+        this.lines.length--;
+
+        this.rasterLine(del, (p, gi, alpha) => {
+          grid[gi + GVAL] = grid[gi + GVAL] + alpha;
+          //grid[gi + GTEST] = Math.abs(err);
+        });
+      } else {
+        this.rasterLine(line, (p, gi, alpha) => {
+          grid[gi + GVAL] = grid[gi + GVAL] - alpha;
+          //grid[gi + GTEST] = Math.abs(err);
+        });
+
+
+        this.lines.push(line);
+      }
     }
 
     this.test_lines.length = 0;
@@ -118,6 +171,10 @@ export class LineArt extends Pattern {
   step_intern2() {
     let th1 = Math.random();
     let th2 = Math.random();
+
+    const doVariance = this.properties.doVariance;
+    const contrast = this.properties.contrast;
+    const brightness = this.properties.brightness;
 
     let steps = this.properties.arcSteps;
 
@@ -150,11 +207,18 @@ export class LineArt extends Pattern {
     let p = new Vector2();
     let count = 0.0;
 
-    if (1) {
+    if (this.addOrDelSign === 1) {
       line = this.findLine();
-      [p1, p2] = line;
+    } else {
+      let ri = ~~(Math.random()*0.99999*this.lines.length);
+      line = this.lines[ri];
     }
 
+    function clamp(f) {
+      return Math.min(Math.max(f, 0.0), 1.0);
+    }
+
+    const addOrDelSign = this.addOrDelSign;
     let iw = this.image.width, ih = this.image.height;
     this.rasterLine(line, (p, gi, alpha) => {
       p = this.localImagePos(p);
@@ -163,11 +227,28 @@ export class LineArt extends Pattern {
         return;
       }
 
-      let oldf = grid[gi + GVAL];
-      let newf = (oldf - grid[gi + GVAL]*alpha);
+      alpha *= addOrDelSign;
+
+      let oldf = clamp(grid[gi + GVAL]);
+      let newf = clamp(oldf - alpha);
+
+      //oldf = oldf**3;
+      //newf = newf**3;
+      //oldf = oldf*0.5 + 0.5;
+      //newf = newf*0.5 + 0.5;
+
+      for (let k = 0; k < contrast; k++) {
+        oldf = oldf*oldf*(3.0 - 2.0*oldf);
+        newf = newf*newf*(3.0 - 2.0*newf);
+      }
+
+      oldf *= brightness;
+      newf *= brightness;
 
       let delta1 = oldf - grid[gi + GGOAL];
       let delta2 = newf - grid[gi + GGOAL];
+
+      grid[gi + GTEST] = newf;
 
       //delta1 = delta1**2;
       //delta2 = delta2**2;
@@ -197,13 +278,17 @@ export class LineArt extends Pattern {
       var1 /= count;
       var2 /= count;
 
-      err1 *= 1.0 + var1*100.0;
-      err2 *= 1.0 + var2*100.0;
+      if (doVariance) {
+        err1 *= 1.0 + var1*10.0;
+        err2 *= 1.0 + var2*10.0;
+      }
     }
 
     //console.log(err1, err2);
-    if (err2 < err1) {
-      this.test_lines.push([err2 - err1, p1, p2]);
+    let prob = this.expDecay;
+    err2 *= 1.0 + 2.0*(Math.random() - 0.5)*(1.0 - prob);
+    if (err2 < err1 || Math.random() > prob) {
+      this.test_lines.push([err2 - err1, line]);
     }
   }
 
@@ -563,10 +648,12 @@ export class LineArt extends Pattern {
     x = ~~(x + 0.5);
     y = ~~(y + 0.5);
 
-    const lineAlpha = this.lineAlpha;
+    let lineAlpha = this.lineAlpha;
     const p = rasterLineTemps.next();
     const ip = rasterLineTemps.next();
     let idimen = 1.0/this.dimen;
+
+    //lineAlpha *= (this.#signI % 5) + 1;
 
     let dd = n[axis ^ 1];
     dd = dd ? Math.floor(1.0/dd) : 0.0;
@@ -609,6 +696,7 @@ export class LineArt extends Pattern {
   reset(image = undefined) {
     const props = this.properties;
 
+    this.#signI = 0;
     this.dimen = props.dimen;
     this.lines = [];
     this.test_lines = [];
@@ -638,7 +726,17 @@ export class LineArt extends Pattern {
   }
 
   loadImage(image) {
+    image = sharpenImage(image, this.properties.sharpen);
+
+    this.origImage = image;
+
+    /* Scale image to have same resolution as the line mask. */
+    let ratio = this.dimen / Math.max(image.width, image.height);
+    let w = Math.max(Math.ceil(image.width*ratio), 4);
+    let h = Math.max(Math.ceil(image.height*ratio), 4);
+    image = resizeImage(image, w, h);
     this.image = image;
+
     let idata = image.data;
 
     this.image_canvas = document.createElement("canvas");
@@ -667,6 +765,9 @@ export class LineArt extends Pattern {
 
   draw(canvas, g) {
     const props = this.properties;
+
+    g.font = "24px solid sans";
+    g.fillText("lines: " + this.lines.length, 20, 40);
 
     this.maskAlpha = props.maskAlpha;
     let sz = this.scale = canvas.width*0.65;
@@ -717,7 +818,7 @@ export class LineArt extends Pattern {
     if (props.drawLines) {
       g.lineWidth *= props.lineWidth;
       for (let l of this.lines) {
-        g.strokeStyle = `rgba(0,0,0,${this.lineAlpha**0.5})`;
+        //g.strokeStyle = `rgba(0,0,0,${this.lineAlpha**0.5})`;
         g.beginPath();
         g.moveTo(l[0][0], l[0][1]);
         g.lineTo(l[1][0], l[1][1]);
