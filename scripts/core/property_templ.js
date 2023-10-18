@@ -6,16 +6,16 @@ import {
 /* maps both name -> proptype and proptype -> name */
 export const PropTypeMap = {
   "float" : PropTypes.FLOAT,
-  "int" : PropTypes.INT,
-  "vec2" : PropTypes.VEC2,
-  "vec3" : PropTypes.VEC3,
-  "vec4" : PropTypes.VEC4,
-  "color3" : PropTypes.VEC3,
-  "color4" : PropTypes.VEC4,
-  "string" : PropTypes.STRING,
-  "enum" : PropTypes.ENUM,
+  "int"   : PropTypes.INT,
+  "vec2"  : PropTypes.VEC2,
+  "vec3"  : PropTypes.VEC3,
+  "vec4"  : PropTypes.VEC4,
+  "color3": PropTypes.VEC3,
+  "color4": PropTypes.VEC4,
+  "string": PropTypes.STRING,
+  "enum"  : PropTypes.ENUM,
   "flags" : PropTypes.FLAG,
-  "bool" : PropTypes.BOOL,
+  "bool"  : PropTypes.BOOL,
 };
 
 for (let k in PropTypeMap) {
@@ -31,6 +31,7 @@ export class PropertiesBag {
   constructor(template) {
     this._props = [];
     this._struct = new DataStruct();
+    this.sourceTemplate = {};
 
     //these two are used by props widget to detect updates
     this._updateGen = 0;
@@ -69,13 +70,38 @@ export class PropertiesBag {
     return val;
   }
 
-  patchTemplate(templ) {
-    this._props.length = 0;
+  #getPropDefs(templ, flat_templ = {}) {
+    for (let k in templ) {
+      if (typeof k === "symbol") {
+        continue;
+      }
 
+      let v = templ[k];
+
+      if (k === "type" && v === "panel") {
+        continue;
+      }
+
+      if (typeof v === "object" && v.type === "panel") {
+        this.#getPropDefs(v, flat_templ);
+      } else {
+        flat_templ[k] = v;
+      }
+    }
+
+    return flat_templ;
+  }
+
+  patchTemplate(templ) {
+    this.sourceTemplate = templ;
+
+    this._props.length = 0;
     this._updateGen++;
 
-    for (let k in templ) {
-      let item = templ[k];
+    let flat_templ = this.#getPropDefs(templ);
+
+    for (let k in flat_templ) {
+      let item = flat_templ[k];
 
       if (typeof item !== "object") {
         item = {type: item};
@@ -89,8 +115,8 @@ export class PropertiesBag {
     let st = this._struct;
     st.clear();
 
-    for (let k in templ) {
-      let item = templ[k];
+    for (let k in flat_templ) {
+      let item = flat_templ[k];
 
       if (typeof item !== "object") {
         item = {type: item};
@@ -143,6 +169,8 @@ export class PropertiesBag {
       def.data.apiname = k;
 
       if (def.data.type & numberTypes) {
+        def.data.baseUnit = def.data.displayUnit = "none";
+
         for (let key of NumberConstraints) {
           if (key in item) {
             def.data[key] = item[key];
@@ -151,6 +179,10 @@ export class PropertiesBag {
 
         if (item.slider) {
           def.simpleSlider();
+        }
+
+        if ("unit" in item) {
+          def.data.baseUnit = def.data.displayUnit = item.unit;
         }
 
         if ("min" in item) {
@@ -179,6 +211,10 @@ export class PropertiesBag {
   }
 
   loadTemplate(templ) {
+    this.sourceTemplate = templ;
+
+    templ = this.#getPropDefs(templ);
+
     for (let k in templ) {
       let item = templ[k];
       if (typeof item !== "object") {
@@ -221,6 +257,8 @@ export class PropertiesBag {
             [item.min, item.max] = prop.range;
           } else if (key === "uiRange") {
             [item.uiMin, item.uiMax] = prop.uiRange;
+          } else if (key === "unit") {
+            item.baseUnit = item.displayUnit = prop[key];
           } else {
             item[key] = prop[key];
           }
@@ -262,6 +300,7 @@ export class PropertiesBag {
     return obj;
   }
 }
+
 PropertiesBag.STRUCT = `
 PropertiesBag {
   _props : array(abstract(ToolProperty)) | this._save();
@@ -279,7 +318,7 @@ export class PropsEditor extends Container {
 
   static define() {
     return {
-      tagname : "props-bag-editor-x"
+      tagname: "props-bag-editor-x"
     }
   }
 
@@ -300,7 +339,7 @@ export class PropsEditor extends Container {
   }
 
   set columns(v) {
-    this.setAttribute("columns", ""+v);
+    this.setAttribute("columns", "" + v);
   }
 
   rebuild() {
@@ -324,12 +363,36 @@ export class PropsEditor extends Container {
     cols = (new Array(cols).fill(1)).map(c => this.col());
     let i = 0;
 
+    let templ = props.sourceTemplate;
+    let rec = (obj, cols) => {
+      for (let k in obj) {
+        let v = obj[k];
+
+        if (k === "type" && v === "panel") {
+          continue;
+        }
+
+        let ci = i++%cols.length;
+
+        if (typeof v === "object" && v.type === "panel") {
+          let panel = cols[ci].panel(ToolProperty.makeUIName(k));
+          let cols2 = (new Array(cols).fill(1)).map(c => panel.col());
+          rec(v, cols2);
+          continue;
+        }
+
+        cols[ci].prop(k);
+      }
+    };
+
+    rec(templ, cols);
+    /*
     for (let prop of props._props) {
-      let col = cols[i % cols.length]
+      let col = cols[i%cols.length]
 
       col.prop(prop.apiname);
       i++;
-    }
+    }*/
 
     loadUIData(this, uidata);
   }
@@ -361,5 +424,6 @@ export class PropsEditor extends Container {
     }
   }
 }
+
 UIBase.register(PropsEditor);
 

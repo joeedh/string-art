@@ -1,9 +1,10 @@
 import {
   simple, nstructjs, util, math, Vector2, UIBase, Icons, KeyMap, haveModal, ToolOp, ToolClasses, HotKey, createMenu,
-  startMenu
+  startMenu, saveUIData
 } from '../path.ux/pathux.js';
 import {loadImageFile} from '../path.ux/scripts/path-controller/util/image.js';
 import {CACHED_IMAGE_KEY} from '../patterns/circle_winding.js';
+import {Pattern} from '../patterns/pattern.js';
 
 export class LoadDefaultsOp extends ToolOp {
   static tooldef() {
@@ -26,6 +27,8 @@ ToolOp.register(LoadDefaultsOp);
 export class Workspace extends simple.Editor {
   constructor() {
     super();
+
+    this.presets_tab_uidata = {};
 
     this.canvas = document.createElement("canvas");
     this.g = this.canvas.getContext("2d");
@@ -225,6 +228,83 @@ export class Workspace extends simple.Editor {
     props.setAttribute("datapath", "properties");
 
     tab.add(props);
+
+    this.makePresetTab(sidebar);
+  }
+
+  _save_tab_uidata() {
+    let ret = [];
+    for (let k in this.presets_tab_uidata) {
+      ret.push(k);
+      ret.push(this.presets_tab_uidata[k]);
+    }
+
+    return ret;
+  }
+
+  makePresetTab(sidebar) {
+    let tab = sidebar.tab("Presets");
+    let listbox = tab.listbox();
+
+    let rebuild = true;
+    let last_pattern;
+    let exists = new Set();
+
+    listbox.update.after(() => {
+      if (!this.ctx.pattern) {
+        return;
+      }
+
+      let patType = this.ctx.pattern.constructor.patternDef.typeName;
+
+      let ok = !rebuild;
+      ok = ok && last_pattern === patType;
+
+      if (ok) {
+        return;
+      }
+
+      console.log("Rebuild presets tab");
+
+      if (last_pattern && exists.has(last_pattern)) {
+        this.presets_tab_uidata[patType] = saveUIData(this, "presets");
+      }
+
+      let presets = this.ctx.pattern.constructor.patternDef.presets || [];
+
+      let make_onclick = (i) => {
+        return () => {
+          this.loadPreset(patType, i);
+        };
+      }
+
+      let i = 0;
+      for (let p of presets) {
+        let item = listbox.addItem(p.presetName, i);
+        item.onclick = make_onclick(i);
+        i++;
+      }
+
+      exists.add(patType);
+      last_pattern = patType;
+      rebuild = false;
+
+    });
+  }
+
+  loadPreset(patType, i) {
+    let preset = Pattern.getClass(patType).patternDef.presets[i];
+    let pattern = this.ctx.pattern;
+    let props = pattern.properties;
+
+    for (let k in preset) {
+      if (k in props) {
+        props[k] = preset[k];
+      }
+    }
+
+    pattern.reset();
+    window.redraw_all();
   }
 
   draw() {
@@ -252,12 +332,26 @@ export class Workspace extends simple.Editor {
     this.ctx.pattern.draw(canvas, this.g);
   }
 
+  loadSTRUCT(reader) {
+    reader(this);
+
+    let lst = this.presets_tab_uidata;
+    if (lst instanceof Array) {
+      this.presets_tab_uidata = {};
+
+      for (let i = 0; i < lst.length; i += 2) {
+        this.presets_tab_uidata[lst[i]] = lst[i + 1];
+      }
+    }
+  }
+
   setCSS() {
     this.canvas.style["position"] = "absolute";
   }
 }
 
 Workspace.STRUCT = nstructjs.inherit(Workspace, simple.Editor, "Workspace") + `
+  presets_tab_uidata : array(string) | this._save_tab_uidata();
 }`;
 simple.Editor.register(Workspace);
 

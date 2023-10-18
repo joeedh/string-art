@@ -3,6 +3,9 @@ import {
   nstructjs, util, math,
   Vector2, Vector3, Vector4
 } from '../path.ux/pathux.js';
+import {hsv_to_rgb} from '../util/color.js';
+import {applyImageFilter} from '../core/imagefilter.js';
+import {GrowPresets} from '../presets/grow_presets.js';
 
 const GFILL = 0, GPOINT = 1, GTOT = 2;
 let rasterLineTemps = util.cachering.fromConstructor(Vector2, 512);
@@ -28,18 +31,12 @@ class Point {
     this.id = point_idgen++;
   }
 
-  spawn(pat, spawnRand, sign) {
+  spawn(pat, th) {
     let p2 = new Point();
     p2.co.load(this.co);
     p2.vel.load(this.vel);
 
-    if (sign === undefined) {
-      sign = Math.sign(pat.rand.random() - 0.5);
-    }
-
-    let th = (pat.rand.random() - 0.5)*Math.PI*spawnRand;
-
-    p2.vel.rot2d(Math.PI*0.5*sign + th)
+    p2.vel.rot2d(th)
 
     p2.angvel = (pat.rand.random() - 0.5)*Math.PI*pat.angVel*0.001;
     p2.mass = this.mass;
@@ -54,32 +51,52 @@ class Point {
 
 export class GrowPattern extends Pattern {
   static patternDef = {
+    version   : 0.0,
     typeName  : "grow",
     uiName    : "Grow",
+    presets   : GrowPresets,
     properties: {
-      dimen     : {
-        type: "int", value: 500, min: 5, max: 4096, slideSpeed: 20, displayUnit: "none", baseUnit: "none"
+      start          : {
+        type  : "panel",
+        dimen : {
+          type: "int", value: 500, min: 5, max: 4096, slideSpeed: 20
+        },
+        points: {type: "int", value: 5, min: 1, max: 512, slideSpeed: 2},
+        seed  : {type: "int", value: 500, min: 5, max: 4096, slideSpeed: 20},
       },
-      points    : {type: "int", value: 5, min: 1, max: 512, slideSpeed: 2, displayUnit: "none", baseUnit: "none"},
-      seed      : {type: "int", value: 500, min: 5, max: 4096, slideSpeed: 20, displayUnit: "none", baseUnit: "none"},
-      spawnRate : {type: "int", value: 50, min: 5, max: 10000, slideSpeed: 20, displayUnit: "none", baseUnit: "none"},
-      spawnRand : {type: "float", value: 0.0, min: 0.0, max: 1.0, displayUnit: "none", baseUnit: "none"},
-      spawnRand2: {type: "float", value: 0.0, min: 0.0, max: 1.0, displayUnit: "none", baseUnit: "none"},
+      spawn          : {
+        type      : "panel",
+        spawnRate : {type: "int", value: 50, min: 5, max: 10000, slideSpeed: 150},
+        spawnCount: {type: "int", value: 2, min: 1, max: 100, slideSpeed: 2},
+        angleRange: {type: "float", value: 1.0, min: 0.0001, max: 3.0},
+        angleRand : {type: "float", value: 0.0, min: 0.0, max: 1.0},
 
-      /* Speeds up spawn rate. */
-      spawnDecay   : {type: "float", value: 1.0, min: 0.001, max: 2.0, displayUnit: "none", baseUnit: "none"},
-      dieAfterSpawn: {
-        type: "int", value: 1000, min: 1, max: 1000, slideSpeed: 20, displayUnit: "none", baseUnit: "none"
+        spawnRand: {type: "float", value: 0.0, min: 0.0, max: 1.0},
+
+        /* Speeds up spawn rate. */
+        spawnDecay   : {type: "float", value: 1.0, min: 0.001, max: 2.0},
+        dieAfterSpawn: {
+          type: "int", value: 1000, min: 1, max: 1000, slideSpeed: 20
+        },
       },
-      colorRate    : {type: "float", value: -1.0, min: 0.0, max: 10.0, displayUnit: "none", baseUnit: "none"},
-      colorOff     : {type: "float", value: 1.75, min: -10.0, max: 10.0, displayUnit: "none", baseUnit: "none"},
-      colorAlpha   : {type: "float", value: 1.0, min: 0.0, max: 1.0, displayUnit: "none", baseUnit: "none"},
-      colorDecay   : {type: "float", value: 1.0, min: 0.0, max: 1.0, displayUnit: "none", baseUnit: "none"},
-      colorBright  : {type: "float", value: 1.0, min: 0.001, max: 10.0, displayUnit: "none", baseUnit: "none"},
-      lineWidth    : {type: "float", value: 2.0, min: 0.01, max: 100.0, displayUnit: "none", baseUnit: "none"},
-      lineDecay    : {type: "float", value: 1.0, min: 0.0, max: 2.0, displayUnit: "none", baseUnit: "none"},
-      angVel       : {type: "float", value: 0.0, min: 0.0, max: 10.0, displayUnit: "none", baseUnit: "none"},
-      angDecay     : {type: "float", value: 0.0, min: 0.0, max: 10.0, displayUnit: "none", baseUnit: "none"},
+      color          : {
+        type       : "panel",
+        colorRate  : {type: "float", value: -1.0, min: 0.0, max: 10.0},
+        colorOff   : {type: "float", value: 1.75, min: -10.0, max: 10.0},
+        colorAlpha : {type: "float", value: 1.0, min: 0.0, max: 1.0},
+        colorDecay : {type: "float", value: 1.0, min: 0.0, max: 1.0},
+        colorBright: {type: "float", value: 1.0, min: 0.001, max: 10.0},
+      },
+      line           : {
+        type     : "panel",
+        lineWidth: {type: "float", value: 2.0, min: 0.01, max: 100.0, step: 0.25},
+        lineDecay: {type: "float", value: 1.0, min: 0.0, max: 2.0, step: 0.01},
+      },
+      angularVelocity: {
+        type    : "panel",
+        angVel  : {type: "float", value: 0.0, min: 0.0, max: 10.0, step: 0.25},
+        angDecay: {type: "float", value: 0.0, min: 0.0, max: 10.0, step: 0.01},
+      }
     }
   }
   static STRUCT = nstructjs.inherit(GrowPattern, Pattern) + `
@@ -206,18 +223,20 @@ export class GrowPattern extends Pattern {
 
     /* Minimum of 50. */
     const minRate = 50;
-    let spawnRate = this.properties.spawnRate + minRate;
-    let spawnRand = this.properties.spawnRand;
-    let spawnRand2 = this.properties.spawnRand2;
-    let spawnDecay = this.properties.spawnDecay**0.2;
-    let dieAfterSpawn = this.properties.dieAfterSpawn;
-    let colorRate = this.properties.colorRate;
-    let colorOff = this.properties.colorOff;
-    let colorAlpha = this.properties.colorAlpha;
-    let colorDecay = this.properties.colorDecay**0.1;
-    let angDecay = this.properties.angDecay;
-    let colorBright = this.properties.colorBright;
-    let lineDecay = this.properties.lineDecay;
+    const spawnRate = this.properties.spawnRate + minRate;
+    const angleRand = this.properties.angleRand;
+    const angleRange = this.properties.angleRange;
+    const spawnCount = this.properties.spawnCount;
+    const spawnRand = this.properties.spawnRand;
+    const spawnDecay = this.properties.spawnDecay**0.2;
+    const dieAfterSpawn = this.properties.dieAfterSpawn;
+    const colorRate = this.properties.colorRate;
+    const colorOff = this.properties.colorOff;
+    const colorAlpha = this.properties.colorAlpha;
+    const colorDecay = this.properties.colorDecay**0.1;
+    const angDecay = this.properties.angDecay;
+    const colorBright = this.properties.colorBright;
+    const lineDecay = this.properties.lineDecay;
 
     this.angVel = this.properties.angVel;
 
@@ -305,16 +324,31 @@ export class GrowPattern extends Pattern {
 
       const off = colorOff;
       const mul = 100.0*(colorRate**2)/spawnRate;
-      let r1 = Math.cos(p.depth*0.1*mul + 0.8 + off)*0.5 + 0.5;
-      let g1 = Math.sin(p.depth*0.05*mul - 0.5 + off)*0.5 + 0.5;
-      let b1 = Math.cos(p.depth*0.06*mul - 0.5 + off)*0.5 + 0.5;
+      let r1, g1, b1;
       let decay = Math.pow(colorDecay, p.depth);
 
-      clr.loadXYZ(r1, g1, b1);
-      clr.normalize();
-      clr.mulScalar(colorBright).minScalar(1.0);
-      clr.mulScalar(decay);
-      [r1, g1, b1] = clr;
+      if (1) {
+        let h = Math.cos(p.depth*0.1*mul + off)*0.5 + 0.5;
+        let v = decay*colorBright;
+        let s = v > 1.0 ? 2.0 - v**0.5 : 1.0;
+
+        h = Math.min(Math.max(h, 0.0), 1.0);
+        v = Math.min(Math.max(v, 0.0), 1.0);
+        s = Math.min(Math.max(s, 0.0), 1.0);
+
+        [r1, g1, b1] = hsv_to_rgb(h, s, v);
+
+      } else {
+        r1 = Math.cos(p.depth*0.1*mul + 0.8 + off)*0.5 + 0.5;
+        g1 = Math.sin(p.depth*0.05*mul - 0.5 + off)*0.5 + 0.5;
+        b1 = Math.cos(p.depth*0.06*mul - 0.5 + off)*0.5 + 0.5;
+
+        clr.loadXYZ(r1, g1, b1);
+        clr.normalize();
+        clr.mulScalar(colorBright).minScalar(1.0);
+        clr.mulScalar(decay);
+        [r1, g1, b1] = clr;
+      }
 
 
       r1 = ~~(r1*255);
@@ -343,10 +377,22 @@ export class GrowPattern extends Pattern {
       let spawnRate2 = ~~(spawnRate*Math.pow(spawnDecay, p.depth));
       spawnRate2 = Math.max(spawnRate2, minRate);
 
-      const age = ~~(p.age + this.rand.random()*spawnRand2*spawnRate2);
+      const age = ~~(p.age + this.rand.random()*spawnRand*spawnRate2);
       if ((age + 1)%spawnRate2 === 0) {
-        p.spawn(this, spawnRand, 1);
-        p.spawn(this, spawnRand, -1);
+        let n = spawnCount;
+        let thrange = Math.PI*angleRange;
+        let dth = thrange/(n - 1);
+        let th = -thrange*0.5;
+
+        if (n === 1) {
+          th = Math.PI*0.5*Math.sign(this.rand.random() - 0.5);
+        }
+
+        for (let k = 0; k < n; k++, th += dth) {
+          th += (this.rand.random() - 0.5)*dth*angleRand;
+          p.spawn(this, th);
+        }
+
         p.noDieTimer = 0;
 
         if (p.totchildren >= dieAfterSpawn) {
@@ -360,7 +406,20 @@ export class GrowPattern extends Pattern {
 
   draw(canvas, g) {
     g.save();
-    g.drawImage(this.canvas, 0, 0);
+    let canvas2 = this.canvas;
+    let canvas3 = applyImageFilter(canvas2, "blur(5px)", true);
+
+    g.globalCompositeOperation = "screen";
+
+    g.globalAlpha = 1.0;
+    g.drawImage(canvas2, 0, 0);
+
+    g.globalAlpha = 1.0;
+    g.drawImage(canvas3, 0, 0);
+    g.drawImage(canvas3, 0, 0);
+
+    g.globalCompositeOperation = "normal";
+
     g.restore();
   }
 }

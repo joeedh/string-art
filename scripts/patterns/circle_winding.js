@@ -2,12 +2,15 @@ import {getImageData} from '../path.ux/scripts/path-controller/util/image.js';
 import {Vector2, Vector3, Vector4, nstructjs, Matrix4, util, math} from '../path.ux/pathux.js';
 import {getColorValue} from '../core/util.js';
 import {Pattern} from './pattern.js';
-import {resizeImage, sharpenImage} from '../core/imagefilter.js';
+import {applyImageFilter, resizeImage, sharpenImage} from '../core/imagefilter.js';
+import {ImageHistogram} from '../util/color.js';
+import {CircleWindingPresets} from '../presets/circle_winding_presets.js';
 
 const LX1 = 0, LY1 = 1, LX2 = 2, LY2 = 3, LTOT = 4;
 const GVAL = 0, GGOAL = 1, GTEST = 3, GTOT = 4;
 
 export const CACHED_IMAGE_KEY = "_startup_file_lart_image";
+const TEST_INVERT = true;
 
 let project_rets = util.cachering.fromConstructor(Vector2, 512);
 let unproject_rets = util.cachering.fromConstructor(Vector2, 512);
@@ -23,36 +26,125 @@ let dvTemps4 = util.cachering.fromConstructor(Vector4, 256);
 
 let rand_seed = 0;
 
+export class LinePool {
+  constructor() {
+    this.freelist = [];
+  }
+
+  alloc(v1, v2) {
+    if (this.freelist.length > 0) {
+      return this.freelist.pop().load(v1, v2);
+    } else {
+      return new Line(v1, v2);
+    }
+  }
+
+  release(line) {
+    /*
+    if (this.freelist.indexOf(line) >= 0) {
+      console.warn(line.stack);
+      debugger;
+    }
+
+    try {
+      throw new Error();
+    } catch (error) {
+      line.stack = error.stack;
+    } //*/
+
+    this.freelist.push(line);
+  }
+}
+
+export class Line extends Array {
+  color = 0;
+  error = 0;
+
+  constructor(v1 = new Vector2(), v2 = new Vector2()) {
+    super();
+
+    this.push(v1);
+    this.push(v2);
+  }
+
+  load(v1, v2) {
+    if (v1) {
+      this[0].load(v1);
+    }
+    if (v2) {
+      this[1].load(v2);
+    }
+
+    return this;
+  }
+
+  copy() {
+    let l = new Line(this[0].copy(), this[1].copy());
+    l.error = this.error;
+    l.color = this.color;
+    return l;
+  }
+}
+
 export class LineArt extends Pattern {
   static patternDef = {
+    version   : 0.0,
     typeName  : "string_winding",
     uiName    : "String Winding",
+    presets   : CircleWindingPresets,
     properties: {
-      dimen        : {
-        type: "int", value: 256, min: 4, max: 1024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"
+      primary: {
+        type            : "panel",
+        dimen           : {
+          type: "int", value: 256, min: 4, max: 1024, slideSpeed: 15,
+        },
+        linesGoal       : {type: "int", value: 4000, min: 1, max: 100000,},
+        steps           : {type: "int", value: 72, min: 1, max: 1024, slideSpeed: 15},
+        substeps        : {type: "int", value: 32, min: 1, max: 1024, slideSpeed: 2},
+        arcSteps        : {
+          type: "int", value: 256, min: 2, max: 8024, slideSpeed: 15
+        },
+        inverted        : {type: "bool", value: false},
+        linesFromImageDv: {type: "bool", value: false},
       },
-      linesGoal    : {type: "int", value: 4000, min: 1, max: 100000, baseUnit: "none", displayUnit: "none"},
-      steps        : {type: "int", value: 72, min: 1, max: 1024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"},
-      substeps     : {type: "int", value: 32, min: 1, max: 1024, slideSpeed: 2, baseUnit: "none", displayUnit: "none"},
-      arcSteps     : {
-        type: "int", value: 256, min: 2, max: 8024, slideSpeed: 15, baseUnit: "none", displayUnit: "none"
+      image  : {
+        type            : "panel",
+        drawImage       : {type: "bool", value: true},
+        drawMask        : {type: "bool", value: true},
+        drawValue       : {type: "bool", value: false},
+        drawTest        : {type: "bool", value: false},
+        maskAlpha       : {type: "float", value: 0.2, min: 0, max: 1.0},
+        sourceBrightness: {type: "float", value: 1.0, min: 0.0, max: 4.0},
+        sourceContrast  : {type: "float", value: 1.0, min: 0.0, max: 4.0},
+        blur            : {
+          type: "float", slider: true, value: 0.0, slideSpeed: 10, min: 0.0, max: 25.0
+        },
+        sharpen         : {
+          type: "float", slider: true, value: 0.1, min: 0.001, max: 1.0
+        },
       },
-      drawImage    : {type: "bool", value: true},
-      drawMask     : {type: "bool", value: true},
-      drawValue    : {type: "bool", value: false},
-      drawTest     : {type: "bool", value: false},
-      maskAlpha    : {type: "float", value: 0.2, min: 0, max: 1.0, baseUnit: "none", displayUnit: "none"},
-      lineAlpha    : {type: "float", value: 0.2, min: 0, max: 1.0, baseUnit: "none", displayUnit: "none"},
-      drawLines    : {type: "bool", value: true},
-      lineWidth    : {type: "float", value: 0.5, min: 0.01, max: 500.0, baseUnit: "none", displayUnit: "none"},
-      maskLineWidth: {type: "float", value: 4.0, min: 0.01, max: 500.0, baseUnit: "none", displayUnit: "none"},
-      expDecay     : {type: "float", value: 1, min: 0.0001, max: 100.0, baseUnit: "none", displayUnit: "none"},
-      delCount     : {type: "int", value: 2, min: 1, max: 1000, baseUnit: "none", displayUnit: "none"},
-      doVariance   : {type: "bool", value: true},
-      contrast     : {type: "int", value: 2, min: 0, max: 10, baseUnit: "none", displayUnit: "none"},
-      brightness   : {type: "float", value: 1.0, min: 0.001, max: 4.0, baseUnit: "none", displayUnit: "none"},
-      sharpen      : {
-        type: "float", slider: true, value: 0.1, min: 0.001, max: 1.0, baseUnit: "none", displayUnit: "none"
+      line   : {
+        type          : "panel",
+        drawLines     : {type: "bool", value: true},
+        lineWidth     : {type: "float", value: 0.5, min: 0.01, max: 500.0},
+        maskLineWidth : {type: "float", value: 4.0, min: 0.01, max: 500.0},
+        advancedRaster: {type: "bool", value: false},
+      },
+      solver : {
+        type     : "panel",
+        lineAlpha: {type: "float", value: 0.2, min: 0, max: 1.0},
+        expDecay : {type: "float", value: 1, min: 0.0001, max: 100.0},
+
+        delCount  : {type: "int", value: 2, min: 1, max: 1000, slideSpeed: 7},
+        doVariance: {type: "bool", value: true},
+        contrast  : {type: "int", value: 2, min: 0, max: 10},
+        brightness: {type: "float", value: 1.0, min: 0.001, max: 4.0},
+      },
+      color  : {
+        type    : "panel",
+        useColor: {type: "bool", value: false},
+        calcBG  : {type: "bool", value: true},
+        colors  : {type: "int", value: 1, min: 1, max: 128},
       },
     }
   };
@@ -81,6 +173,11 @@ export class LineArt extends Pattern {
   lineAlpha = 0.2;
   addOrDelSign = 1;
   #signI = 0;
+  expDecay = 0.0;
+
+  imageWidth = 0;
+  imageHeight = 0;
+  advancedRaster = false;
 
   step() {
     this.lineAlpha = this.properties.lineAlpha;
@@ -93,7 +190,7 @@ export class LineArt extends Pattern {
     this.expDecay = Math.exp(-this.#signI*this.properties.expDecay*0.0001);
     this.expDecay = (1.0 - this.expDecay)*0.5 + 0.5;
 
-    console.log("Step!", this.expDecay.toFixed(3));
+    //console.log("Step!", this.expDecay.toFixed(3));
 
     for (let i = 0; i < this.properties.steps; i++) {
       this.step_intern();
@@ -133,22 +230,24 @@ export class LineArt extends Pattern {
 
     if (this.test_lines.length > 0) {
       let line;
+
       for (let l of this.test_lines) {
-        if (!line || l[0] < line[0]) {
+        if (!line || l.error < line.error) {
           line = l;
         }
       }
 
-      const err = line[0];
-      line = line[1];
       let grid = this.grid;
 
       if (this.addOrDelSign === -1) {
         let ri = this.lines.indexOf(line);
         let del = this.lines[ri];
 
+        /* Remove from this.lines. */
         this.lines[ri] = this.lines[this.lines.length - 1];
         this.lines.length--;
+
+        this.linepool.release(line);
 
         this.rasterLine(del, (p, gi, alpha) => {
           grid[gi + GVAL] = grid[gi + GVAL] + alpha;
@@ -160,17 +259,24 @@ export class LineArt extends Pattern {
           //grid[gi + GTEST] = Math.abs(err);
         });
 
+        for (let l of this.test_lines) {
+          if (l !== line) {
+            this.linepool.release(l);
+          }
+        }
 
         this.lines.push(line);
       }
-    }
 
-    this.test_lines.length = 0;
+      this.test_lines.length = 0;
+    }
   }
 
   step_intern2() {
     let th1 = Math.random();
     let th2 = Math.random();
+
+    this.advancedRaster = this.properties.advancedRaster;
 
     const doVariance = this.properties.doVariance;
     const contrast = this.properties.contrast;
@@ -269,6 +375,9 @@ export class LineArt extends Pattern {
     });
 
     if (!count) {
+      if (this.addOrDelSign === 1) {
+        this.linepool.release(line);
+      }
       return;
     }
 
@@ -284,19 +393,61 @@ export class LineArt extends Pattern {
       }
     }
 
-    //console.log(err1, err2);
+    /* Simulated annealing. */
     let prob = this.expDecay;
     err2 *= 1.0 + 2.0*(Math.random() - 0.5)*(1.0 - prob);
+
     if (err2 < err1 || Math.random() > prob) {
-      this.test_lines.push([err2 - err1, line]);
+      line.error = err2 - err1;
+      this.test_lines.push(line);
+    } else {
+      if (this.addOrDelSign === 1) {
+        this.linepool.release(line);
+      }
     }
   }
 
   findLine() {
+    if (this.properties.linesFromImageDv) {
+      return this.findLineFromImage();
+    } else {
+      return this.findLineRandom();
+    }
+  }
+
+  findLineRandom() {
+    let line = this.linepool.alloc();
+
+    let th1 = Math.random()*Math.PI*2.0;
+    let th2 = Math.random()*Math.PI*2.0;
+    let steps = this.properties.arcSteps;
+
+    th1 = Math.floor(th1*steps)/steps;
+    th2 = Math.floor(th2*steps)/steps;
+    let l1 = line[0], l2 = line[1];
+
+    l1[0] = Math.cos(th1)*0.5 + 0.5;
+    l1[1] = Math.sin(th1)*0.5 + 0.5;
+    l2[0] = Math.cos(th2)*0.5 + 0.5;
+    l2[1] = Math.sin(th2)*0.5 + 0.5;
+
+    return line;
+  }
+
+  findLineFromImage(tries = 100) {
     let x = Math.random(), y = Math.random();
     let p = [x, y];
 
     let dv = this.dvImage(p);
+
+    if (dv.dot(dv) < 0.001) {
+      if (tries > 0) {
+        return this.findLineFromImage(tries - 1);
+      } else {
+        return this.findLineRandom();
+      }
+    }
+
     let t = dv[0];
     dv[0] = dv[1];
     dv[1] = -t;
@@ -337,12 +488,22 @@ export class LineArt extends Pattern {
     l1.loadXY(x, y).addFac(dv, t1);
     l2.loadXY(x, y).addFac(dv, t2);
 
+    if (0) {
+      let tan = new Vector2(l2).sub(l1);
+      let thb = Math.atan2(tan[1], tan[0]);
+
+      if (Math.abs(thb - th) > 0.0001) {
+        console.log(th, thb);
+        debugger;
+      }
+    }
+
     let th1 = Math.atan2(l1[1] - cy, l1[0] - cx)/Math.PI/2.0;
     let th2 = Math.atan2(l2[1] - cy, l2[0] - cx)/Math.PI/2.0;
     let steps = this.properties.arcSteps;
 
-    th1 += (Math.random() - 0.5)*(steps*4.0);
-    th2 += (Math.random() - 0.5)*(steps*4.0);
+    th1 += (Math.random() - 0.5)*0.5*Math.PI*(1.0 - this.expDecay);
+    th2 += (Math.random() - 0.5)*0.5*Math.PI*(1.0 - this.expDecay);
 
     th1 = Math.PI*2.0*Math.floor(th1*steps + 0.5)/steps;
     th2 = Math.PI*2.0*Math.floor(th2*steps + 0.5)/steps;
@@ -351,11 +512,12 @@ export class LineArt extends Pattern {
 
     l1[0] = Math.cos(th1)*0.5 + 0.5;
     l1[1] = Math.sin(th1)*0.5 + 0.5;
+
     l2[0] = Math.cos(th2)*0.5 + 0.5;
     l2[1] = Math.sin(th2)*0.5 + 0.5;
     //console.log(l1);
 
-    return [l1, l2];
+    return this.linepool.alloc(l1, l2);
   }
 
   rasterTri(v1, v2, v3, cb) {
@@ -424,6 +586,7 @@ export class LineArt extends Pattern {
     let t1 = rasterTemps.next().load(v3).sub(v1).normalize();
     let t2 = rasterTemps.next().load(v2).sub(v1).normalize();
     let t3 = rasterTemps.next().load(v3).sub(v2).normalize();
+    let pt = rasterTemps.next();
 
     const feps = 0.00001;
     if (Math.abs(t1[axis] < feps || Math.abs(t2[axis]) < feps)
@@ -498,8 +661,12 @@ export class LineArt extends Pattern {
         }
       }
 
-      a = Math.floor(a);
-      b = Math.floor(b);
+      /* Really stupid rasterizer, pad out
+       * extra pixels, the UV test will filter
+       * them.
+       **/
+      a = Math.floor(a) - 4;
+      b = Math.floor(b) + 4;
       p[axis2] = a;
 
       let off = Math.fract(p[axis2])*invdimen;
@@ -507,9 +674,8 @@ export class LineArt extends Pattern {
       let da = Math.sign(b - a);
 
       do {
-        const off = window.DD ?? 0.0;
-        let ix = ~~(p[0] + off);
-        let iy = ~~(p[1] + off);
+        let ix = ~~p[0];
+        let iy = ~~p[1];
         let gi = (iy*dimen + ix)*GTOT;
 
         normp[0] = p[0]*invdimen;
@@ -518,13 +684,18 @@ export class LineArt extends Pattern {
         //normp[1] = iy*invdimen;
 
         if (normp[0] >= 0.0 && normp[1] >= 0.0 && normp[0] < 1.0 && normp[1] < 1.0) {
-          let uv = math.barycentric_v2(p, v1orig, v2orig, v3orig);
-          cb(normp, gi, uv);
+          pt.load(p).floor().addScalar(0.5);
+
+          let uv = math.barycentric_v2(pt, v1orig, v2orig, v3orig);
+          const eps = 0.00001;
+          if (uv[0] >= -eps && uv[1] >= -eps && uv[0] + uv[1] <= 1.0 + eps) {
+            cb(normp, gi, uv);
+          }
         }
 
-        p[axis2] += 1.0;
-        a += 1.0;
-      } while (a < b);
+        p[axis2] += 1;
+        a += 1;
+      } while (a <= b);
 
       let o = 1.0001;
       p1.addFac(t1, o);
@@ -560,8 +731,11 @@ export class LineArt extends Pattern {
   }
 
   rasterLine(l, cb) {
-    this.rasterLineSimple(l, cb);
-    return; //XXX
+    if (!this.advancedRaster) {
+      this.rasterLineSimple(l, cb);
+      return;
+    }
+    //return; //XXX
 
     let tan = thickLineTemps.next().load(l[1]).sub(l[0]).normalize();
     let w = this.properties.maskLineWidth*0.5/this.dimen;
@@ -593,7 +767,8 @@ export class LineArt extends Pattern {
       let t = n[0];
       n[0] = n[1];
       n[1] = -t;
-      n.mulScalar(0.75/this.dimen);
+      n.mulScalar(0.5/this.dimen);
+
       if (dir) {
         n.negate();
       }
@@ -686,6 +861,8 @@ export class LineArt extends Pattern {
   constructor(props) {
     super();
 
+    this.linepool = new LinePool();
+
     if (props !== undefined) {
       this.properties = props;
     }
@@ -726,16 +903,34 @@ export class LineArt extends Pattern {
   }
 
   loadImage(image) {
-    image = sharpenImage(image, this.properties.sharpen);
+    this.lines = [];
+    this.test_lines = [];
+
+    if (this.properties.sharpen) {
+      image = sharpenImage(image, this.properties.sharpen);
+    }
+    if (this.properties.blur) {
+      let px = this.properties.blur;
+      image = applyImageFilter(image, `blur(${px}px)`);
+    }
+
+    let bt = ~~(this.properties.sourceBrightness*100.0);
+    let ct = ~~(this.properties.sourceContrast*100.0);
+    image = applyImageFilter(image, `brightness(${bt}%) contrast(${ct}%)`);
 
     this.origImage = image;
 
     /* Scale image to have same resolution as the line mask. */
-    let ratio = this.dimen / Math.max(image.width, image.height);
+    let ratio = this.dimen/Math.max(image.width, image.height);
     let w = Math.max(Math.ceil(image.width*ratio), 4);
     let h = Math.max(Math.ceil(image.height*ratio), 4);
     image = resizeImage(image, w, h);
     this.image = image;
+
+    /* Profiling revealed that accessing image.width is slightly non-trivial
+     * inside of localImagePos. */
+    this.imageWidth = this.image.width;
+    this.imageHeight = this.image.height;
 
     let idata = image.data;
 
@@ -744,6 +939,10 @@ export class LineArt extends Pattern {
     this.image_canvas.width = image.width;
     this.image_canvas.height = image.height;
     this.image_canvas.g.putImageData(image, 0, 0);
+
+    if (this.properties.useColor) {
+      this.initColor();
+    }
 
     this.mask_canvas = document.createElement("canvas");
     this.mask_canvas.g = this.mask_canvas.getContext("2d");
@@ -763,11 +962,34 @@ export class LineArt extends Pattern {
     window.redraw_all();
   }
 
+  initColor() {
+    let hist = new ImageHistogram(512);
+    hist.calc(this.image, true);
+    console.log(hist);
+    console.log(hist.getMedianColor());
+
+    this.bgColor = hist.getMedianColor();
+  }
+
   draw(canvas, g) {
     const props = this.properties;
 
-    g.font = "24px solid sans";
-    g.fillText("lines: " + this.lines.length, 20, 40);
+    const inverted = props.inverted;
+
+    if (this.bgColor && props.useColor) {
+      let r1 = ~~(this.bgColor[0]*255);
+      let g1 = ~~(this.bgColor[1]*255);
+      let b1 = ~~(this.bgColor[2]*255);
+      g.fillStyle = `rgb(${r1},${g1},${b1})`;
+      g.beginPath();
+      g.rect(0, 0, 2000, 2000);
+      g.fill();
+    } else if (inverted) {
+      g.fillStyle = "black";
+      g.beginPath();
+      g.rect(0, 0, 2000, 2000);
+      g.fill();
+    }
 
     this.maskAlpha = props.maskAlpha;
     let sz = this.scale = canvas.width*0.65;
@@ -807,7 +1029,9 @@ export class LineArt extends Pattern {
 
     g.scale(sz, sz);
 
-    g.lineWidth /= sz*0.5;
+    let dpi = devicePixelRatio;
+
+    g.lineWidth /= 300.0;
 
     g.strokeStyle = "black";
     g.beginPath();
@@ -815,8 +1039,13 @@ export class LineArt extends Pattern {
     g.closePath();
     g.stroke();
 
+    if (inverted) {
+      g.strokeStyle = "white";
+    }
+
     if (props.drawLines) {
       g.lineWidth *= props.lineWidth;
+
       for (let l of this.lines) {
         //g.strokeStyle = `rgba(0,0,0,${this.lineAlpha**0.5})`;
         g.beginPath();
@@ -827,6 +1056,23 @@ export class LineArt extends Pattern {
     }
 
     g.restore();
+
+    let bg = this.bgColor;
+    if (bg) {
+      let r1 = (1.0 - bg[0])*255;
+      let g1 = (1.0 - bg[1])*255;
+      let b1 = (1.0 - bg[2])*255;
+      g.fillStyle = `rgb(${~~r1},${~~g1},${~~b1})`;
+    } else if (inverted) {
+      g.fillStyle = "white";
+    } else {
+      g.fillStyle = "black";
+    }
+
+    g.font = "24px solid sans";
+    g.beginPath()
+    g.fillText("lines: " + this.lines.length, 20, 40);
+    g.fillText("expDecay: " + this.expDecay.toFixed(4), 20, 80);
   }
 
   localMouse(p) {
@@ -846,16 +1092,16 @@ export class LineArt extends Pattern {
     p = project_rets.next().load(p);
 
     let scale = this.scale;
-    let imagescale = scale/this.image.width;
+    let imagescale = scale/this.imageWidth;
 
-    let w = this.image.width;
-    let h = this.image.height;
+    let w = this.imageWidth;
+    let h = this.imageHeight;
     let asp = w/h;
 
-    p[0] *= this.image.width;
-    p[1] *= this.image.width;
+    p[0] *= this.imageWidth;
+    p[1] *= this.imageWidth;
 
-    h = this.image.height*imagescale;
+    h = this.imageHeight*imagescale;
 
     if (asp > 1.0) {
       p[1] += -(scale - h)*0.5/imagescale;
@@ -898,6 +1144,8 @@ export class LineArt extends Pattern {
     let test = this.test = new ImageData(dimen, dimen);
     let vdata = value.data;
 
+    const inverted = this.properties.inverted;
+
     for (let i = 0; i < inum; i++) {
       let ix = i%dimen;
       let iy = ~~(i/dimen);
@@ -923,9 +1171,14 @@ export class LineArt extends Pattern {
       let a = idata[idx + 3]*inv255;
 
       let f = getColorValue(r, g, b);
+
       //f = f*f*(3.0 - 2.0*f)*1.5;
       for (let k = 0; k < 2; k++) {
         f = f*f*(3.0 - 2.0*f);
+      }
+
+      if (inverted) {
+        f = 1.0 - f;
       }
 
       //f = f > 0.5;
@@ -996,23 +1249,28 @@ export class LineArt extends Pattern {
     return this;
   }
 
-  dvImage(p, filterWid = 5) {
+  dvImage(p, filterWid = 2) {
     let a = this.sampleImage(p, filterWid);
+    let ret = dvTemps2.next();
+
+    if (a[3] < 0.1) {
+      ret.zero();
+      return ret;
+    }
 
     let p2 = dvTemps2.next();
     let dv = 2.0/this.dimen;
 
     p2.loadXY(p[0] + dv, p[1]);
-    let b = this.sampleImage(p2);
+    let b = this.sampleImage(p2, filterWid);
 
     p2.loadXY(p[0], p[1] + dv);
-    let c = this.sampleImage(p2);
+    let c = this.sampleImage(p2, filterWid);
 
     a = getColorValue(a[0], a[1], a[2]);
     b = getColorValue(b[0], b[1], b[2]);
     c = getColorValue(c[0], c[1], c[2]);
 
-    let ret = dvTemps2.next();
     ret[0] = (b - a)/dv;
     ret[1] = (c - a)/dv;
 

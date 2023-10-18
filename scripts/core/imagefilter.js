@@ -23,7 +23,7 @@ export function resizeImage(image, w, h) {
 }
 
 /** Takes an ImageData or other image source and returns an ImageData. */
-export function applyImageFilter(image, filterString) {
+export function applyImageFilter(image, filterString, returnCanvas = false) {
   let canvas = document.createElement("canvas");
   let g = canvas.getContext("2d");
   canvas.width = image.width;
@@ -47,7 +47,7 @@ export function applyImageFilter(image, filterString) {
 
   g2.drawImage(canvas, 0, 0);
 
-  return g2.getImageData(0, 0, image.width, image.height);
+  return returnCanvas ? canvas2 : g2.getImageData(0, 0, image.width, image.height);
 }
 
 export function sharpenImage(image, factor) {
@@ -69,9 +69,9 @@ export function sharpenImage(image, factor) {
      b   a   b
      a   c   a
      b   a   b`
-    .replace(/a/g, ""+a)
-    .replace(/b/g, ""+b)
-    .replace(/c/g, ""+c)
+    .replace(/a/g, "" + a)
+    .replace(/b/g, "" + b)
+    .replace(/c/g, "" + c)
     .trim();
 
   let filter = document.createElementNS(SVG, "filter");

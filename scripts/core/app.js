@@ -10,7 +10,7 @@ import {FileArgs} from '../path.ux/scripts/simple/file.js';
 import {PropertiesBag} from './property_templ.js';
 import {Context} from './context.js';
 import {LineArt} from '../patterns/circle_winding.js';
-import {makePatternProp, PatternClasses} from '../patterns/pattern.js';
+import {makePatternProp, PatternClasses, PatternPresets} from '../patterns/pattern.js';
 import '../patterns/all.js';
 
 export const STARTUP_FILE_KEY = "_startup_file_lart2";
@@ -53,13 +53,18 @@ export class App extends simple.AppState {
     this.patterns = [];
     this.patternIndex = 0;
 
+    this.patternPresets = new PatternPresets();
+
     this.timer = undefined;
     this.constructor.defineAPI(this.api);
   }
 
   static defineAPI(api) {
     let st = api.mapStruct(this);
+
     st.enum("patternIndex", "patternIndex", makePatternProp());
+    (new PatternPresets()).defineAPI(api);
+
     return st;
   }
 
@@ -182,7 +187,10 @@ export class App extends simple.AppState {
 
     this.timer = window.setInterval(() => {
       if (window.redraw_all_nr !== draw_nr) {
-        this.step();
+        let t = util.time_ms();
+        while (util.time_ms() - t < 75) {
+          this.step();
+        }
         draw_nr = window.redraw_all_nr;
         window.redraw_all();
       }
@@ -190,7 +198,10 @@ export class App extends simple.AppState {
   }
 
   step() {
+    //let t = util.time_ms();
+    //while (util.time_ms() - t < 55) {
     this.pattern.step();
+    //}
   }
 
   draw() {
@@ -239,7 +250,6 @@ export function start() {
       return;
     }
 
-    console.warn("redraw_all");
     animreq = requestAnimationFrame(drawfunc);
   }
 
