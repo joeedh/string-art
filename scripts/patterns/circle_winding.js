@@ -895,7 +895,7 @@ export class LineArt extends Pattern {
           this.loadImage(image);
         }
       });
-    } else {
+    } else if (image) {
       this.loadImage(image);
     }
 
